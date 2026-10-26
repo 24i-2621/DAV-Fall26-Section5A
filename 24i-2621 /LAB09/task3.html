@@ -1,0 +1,285 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Route Network</title>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f8f9fa;
+        }
+
+        h2 {
+            text-align: center;
+            color: #222;
+        }
+
+        p {
+            text-align: center;
+            color: #555;
+        }
+
+        svg {
+            display: block;
+            margin: auto;
+            background-color: white;
+            border: 1px solid #ccc;
+        }
+
+        .link {
+            stroke: #999;
+            stroke-opacity: 0.7;
+        }
+
+        .node circle {
+            fill: #3182bd;
+            stroke: white;
+            stroke-width: 2px;
+        }
+
+        .node text {
+            font-size: 12px;
+            font-weight: bold;
+            fill: #111827;
+            stroke: white;
+            stroke-width: 3px;
+            stroke-linejoin: round;
+            paint-order: stroke;
+            pointer-events: none;
+        }
+
+        .node {
+            cursor: grab;
+        }
+
+        .node:active {
+            cursor: grabbing;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>Flight Route Network of Pakistan</h2>
+    <p>Hover over a city to highlight its flight routes. Drag cities to reposition them.</p>
+
+    <svg width="1100" height="700"></svg>
+
+    <script>
+        const width = 1100;
+        const height = 700;
+
+        const svg = d3.select("svg");
+
+        const g = svg.append("g");
+
+        d3.csv("flights.csv", d3.autoType).then(function(data) {
+
+            // Build the city node list from the edge list
+            const cityNames = new Set();
+
+            data.forEach(d => {
+                cityNames.add(d.source);
+                cityNames.add(d.target);
+            });
+
+            const nodes = Array.from(cityNames, name => ({
+                id: name,
+                degree: 0
+            }));
+
+            // Calculate each city's degree
+            data.forEach(d => {
+                nodes.find(n => n.id === d.source).degree++;
+                nodes.find(n => n.id === d.target).degree++;
+            });
+
+            // Convert source and target names into node objects
+            const links = data.map(d => ({
+                source: d.source,
+                target: d.target,
+                flights: +d.flights
+            }));
+
+            // Link thickness scale
+            const linkWidth = d3.scaleLinear()
+                .domain(d3.extent(links, d => d.flights))
+                .range([1, 7]);
+
+            // Node radius scale based on degree
+            const nodeRadius = d3.scaleSqrt()
+                .domain(d3.extent(nodes, d => d.degree))
+                .range([8, 25]);
+
+            // Force-directed simulation
+            const simulation = d3.forceSimulation(nodes)
+                .force("link", d3.forceLink(links)
+                    .id(d => d.id)
+                    .distance(130))
+                .force("charge", d3.forceManyBody()
+                    .strength(-350))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collide", d3.forceCollide()
+                    .radius(d => nodeRadius(d.degree) + 25));
+
+            // Draw links
+            const link = g.append("g")
+                .attr("class", "links")
+                .selectAll("line")
+                .data(links)
+                .join("line")
+                .attr("class", "link")
+                .attr("stroke-width", d => linkWidth(d.flights));
+
+            // Add flight count labels to links
+            const linkLabel = g.append("g")
+                .selectAll("text")
+                .data(links)
+                .join("text")
+                .attr("font-size", "10px")
+                .attr("font-weight", "bold")
+                .attr("fill", "#000000")
+                .attr("stroke", "white")
+                .attr("stroke-width", "3px")
+                .attr("stroke-linejoin", "round")
+                .attr("paint-order", "stroke")
+                .attr("text-anchor", "middle")
+                .attr("dy", "-5px")
+                .text(d => d.flights);
+            // Draw city nodes
+            const node = g.append("g")
+                .attr("class", "nodes")
+                .selectAll("g")
+                .data(nodes)
+                .join("g")
+                .attr("class", "node");
+
+            node.append("circle")
+                .attr("r", d => nodeRadius(d.degree));
+
+            node.append("text")
+                .attr("x", d => nodeRadius(d.degree) + 5)
+                .attr("dy", "0.35em")
+                .text(d => d.id);
+
+            // Highlight connected routes on hover
+            node.on("mouseenter", function(event, d) {
+
+                link
+                    .attr("stroke", l =>
+                        l.source.id === d.id || l.target.id === d.id
+                            ? "#e6550d"
+                            : "#ccc"
+                    )
+                    .attr("stroke-opacity", l =>
+                        l.source.id === d.id || l.target.id === d.id
+                            ? 1
+                            : 0.08
+                    );
+
+                linkLabel
+                    .attr("opacity", l =>
+                        l.source.id === d.id || l.target.id === d.id
+                            ? 1
+                            : 0.08
+                    );
+
+                node.select("circle")
+                    .attr("fill", n =>
+                        n.id === d.id
+                            ? "#e6550d"
+                            : links.some(l =>
+                                (l.source.id === d.id && l.target.id === n.id) ||
+                                (l.target.id === d.id && l.source.id === n.id)
+                            )
+                                ? "#31a354"
+                                : "#bdbdbd"
+                    );
+
+                node.select("text")
+                    .attr("opacity", n =>
+                        n.id === d.id ||
+                        links.some(l =>
+                            (l.source.id === d.id && l.target.id === n.id) ||
+                            (l.target.id === d.id && l.source.id === n.id)
+                        )
+                            ? 1
+                            : 0.15
+                    );
+            });
+
+            node.on("mouseleave", function() {
+
+                link
+                    .attr("stroke", "#999")
+                    .attr("stroke-opacity", 0.7);
+
+                linkLabel.attr("opacity", 1);
+
+                node.select("circle")
+                    .attr("fill", "#3182bd");
+
+                node.select("text")
+                    .attr("opacity", 1);
+            });
+
+            // Drag behavior
+            node.call(
+                d3.drag()
+                    .on("start", function(event, d) {
+                        if (!event.active) {
+                            simulation.alphaTarget(0.3).restart();
+                        }
+
+                        d.fx = d.x;
+                        d.fy = d.y;
+                    })
+                    .on("drag", function(event, d) {
+                        d.fx = event.x;
+                        d.fy = event.y;
+                    })
+                    .on("end", function(event, d) {
+                        if (!event.active) {
+                            simulation.alphaTarget(0);
+                        }
+
+                        d.fx = null;
+                        d.fy = null;
+                    })
+            );
+
+            // Update node and link positions during simulation
+            simulation.on("tick", function() {
+
+                link
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+
+                linkLabel
+                    .attr("x", d => (d.source.x + d.target.x) / 2)
+                    .attr("y", d => (d.source.y + d.target.y) / 2);
+
+                node.attr("transform", d =>
+                    `translate(${d.x},${d.y})`
+                );
+            });
+
+        }).catch(function(error) {
+            console.error("Error loading flights.csv:", error);
+
+            alert(
+                "Could not load flights.csv. Keep it in the same folder and run this file using VS Code Live Server."
+            );
+        });
+    </script>
+
+</body>
+</html>

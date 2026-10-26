@@ -1,0 +1,211 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pakistan Cities Population Map</title>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background: #f4f7fb;
+        }
+
+        h1 {
+            color: #1f2937;
+        }
+
+        svg {
+            background: #eaf4ff;
+            border: 1px solid #999;
+        }
+
+        .country {
+            fill: #e5e7eb;
+            stroke: #ffffff;
+            stroke-width: 0.8px;
+        }
+
+        .pakistan {
+            fill: #c7e8c2;
+            stroke: #064e3b;
+            stroke-width: 3px;
+            stroke-linejoin: round;
+        }
+
+        .city {
+            fill: #f97316;
+            fill-opacity: 0.8;
+            stroke: #7c2d12;
+            stroke-width: 1.5px;
+        }
+
+        .city:hover {
+            fill: #dc2626;
+            fill-opacity: 1;
+            stroke: #111827;
+            stroke-width: 2px;
+        }
+
+        .city-label {
+            font-size: 12px;
+            font-weight: bold;
+            fill: #111827;
+            stroke: white;
+            stroke-width: 3px;
+            stroke-linejoin: round;
+            paint-order: stroke;
+            pointer-events: none;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: white;
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 10px;
+            font-size: 13px;
+            pointer-events: none;
+            opacity: 0;
+            text-align: left;
+            box-shadow: 0 2px 6px #999;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Pakistan Cities Population Map</h1>
+    <p>Circle size represents population. Hover over any city for details.</p>
+
+    <svg id="map" width="1000" height="650"></svg>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        const width = 1000;
+        const height = 650;
+
+        const svg = d3.select("#map");
+        const tooltip = d3.select("#tooltip");
+
+        Promise.all([
+            d3.csv("pakistan_cities.csv", d3.autoType),
+            d3.json("world.geojson")
+        ]).then(function(data) {
+
+            const cities = data[0];
+            const world = data[1];
+
+            // Create map projection
+            const projection = d3.geoMercator()
+                .center([69.5, 30.5])
+                .scale(1800)
+                .translate([width / 2, height / 2]);
+
+            const path = d3.geoPath()
+                .projection(projection);
+
+            // Identify Pakistan in the GeoJSON
+            function isPakistan(d) {
+                const p = d.properties || {};
+
+                return (
+                    p.name === "Pakistan" ||
+                    p.ADMIN === "Pakistan" ||
+                    p.NAME === "Pakistan" ||
+                    p["ISO3166-1-Alpha-3"] === "PAK" ||
+                    p.ISO_A3 === "PAK" ||
+                    p.ADM0_A3 === "PAK"
+                );
+            }
+
+            // Draw country boundaries
+            svg.selectAll(".country")
+                .data(world.features)
+                .join("path")
+                .attr("class", d =>
+                    isPakistan(d) ? "country pakistan" : "country"
+                )
+                .attr("d", path);
+
+            // Circle size depends on population
+            const radius = d3.scaleSqrt()
+                .domain([0, d3.max(cities, d => d.pop)])
+                .range([3, 28]);
+
+            // Draw all city circles
+            svg.selectAll(".city")
+                .data(cities)
+                .join("circle")
+                .attr("class", "city")
+                .attr("cx", d => projection([d.lon, d.lat])[0])
+                .attr("cy", d => projection([d.lon, d.lat])[1])
+                .attr("r", d => radius(d.pop))
+
+                // Show tooltip for every city
+                .on("mouseenter", function(event, d) {
+                    tooltip.html(
+                        "<strong>" + d.name + "</strong><br>" +
+                        "Population: " + d.pop + " million<br>" +
+                        "Latitude: " + d.lat + "<br>" +
+                        "Longitude: " + d.lon
+                    ).style("opacity", 1);
+                })
+
+                .on("mousemove", function(event) {
+                    tooltip
+                        .style("left", (event.pageX + 12) + "px")
+                        .style("top", (event.pageY + 12) + "px");
+                })
+
+                .on("mouseleave", function() {
+                    tooltip.style("opacity", 0);
+                });
+
+            // Label positions to reduce overlap
+            const offsets = {
+                Karachi:    { dx: 12,  dy: 18 },
+                Lahore:     { dx: 12,  dy: -12 },
+                Faisalabad: { dx: -78, dy: -12 },
+                Multan:     { dx: 12,  dy: 20 },
+                Peshawar:   { dx: -70, dy: -12 },
+                Islamabad:  { dx: 12,  dy: 20 },
+                Sialkot:    { dx: 12,  dy: -10 },
+                Gwadar:     { dx: 12,  dy: 5 },
+                Skardu:     { dx: 12,  dy: -5 }
+            };
+
+            // Label cities with population greater than 1 million
+            // Quetta is not labeled because its population is exactly 1.0
+            svg.selectAll(".city-label")
+                .data(cities.filter(d => d.pop > 1))
+                .join("text")
+                .attr("class", "city-label")
+                .attr("x", d =>
+                    projection([d.lon, d.lat])[0] +
+                    offsets[d.name].dx
+                )
+                .attr("y", d =>
+                    projection([d.lon, d.lat])[1] +
+                    offsets[d.name].dy
+                )
+                .text(d => d.name);
+
+        }).catch(function(error) {
+            console.error("Error loading files:", error);
+
+            d3.select("body")
+                .append("p")
+                .style("color", "red")
+                .text("Could not load files. Check your CSV and GeoJSON filenames.");
+        });
+    </script>
+
+</body>
+</html>
+

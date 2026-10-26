@@ -1,0 +1,373 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pakistan Cities and Flight Routes</title>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background: #f4f7fb;
+            color: #1f2937;
+        }
+
+        svg {
+            background: #eaf4ff;
+            border: 1px solid #cbd5e1;
+            max-width: 100%;
+            height: auto;
+        }
+
+        .route {
+            fill: none;
+            stroke: #64748b;
+            stroke-opacity: 0.7;
+            pointer-events: none;
+        }
+
+        .city {
+            stroke: white;
+            stroke-width: 2px;
+            cursor: pointer;
+            pointer-events: all;
+        }
+
+        .city-label {
+            font-size: 12px;
+            font-weight: bold;
+            fill: #111827;
+            stroke: white;
+            stroke-width: 3px;
+            stroke-linejoin: round;
+            paint-order: stroke;
+            pointer-events: none;
+        }
+
+        .legend {
+            background: white;
+            padding: 15px;
+            margin: 15px auto;
+            max-width: 850px;
+            text-align: left;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+        }
+
+        .legend p {
+            margin: 10px 0;
+        }
+
+        .dot {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            vertical-align: middle;
+            border: 1px solid #333;
+        }
+
+        .line {
+            display: inline-block;
+            width: 50px;
+            vertical-align: middle;
+            border-top-style: solid;
+            border-top-color: #64748b;
+        }
+
+        .tooltip {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+            background: white;
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 10px;
+            font-size: 13px;
+            text-align: left;
+            box-shadow: 0 2px 8px #94a3b8;
+        }
+
+        button {
+            padding: 8px 15px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Pakistan Cities and Flight Routes</h1>
+    <p>Hover over a city to highlight its connected flight routes.</p>
+
+    <button id="reset">Reset Map</button>
+
+    <br><br>
+
+    <svg id="map" width="1000" height="650"></svg>
+
+    <div class="legend">
+        <h3>Legend: Four Visual Encodings</h3>
+
+        <p><strong>1. Position:</strong>
+            Each city is positioned using longitude and latitude.
+        </p>
+
+        <p><strong>2. Circle size:</strong>
+            <span class="dot" style="width:7px;height:7px;background:#2563eb;"></span>
+            Small population
+            &nbsp;
+            <span class="dot" style="width:17px;height:17px;background:#2563eb;"></span>
+            Medium population
+            &nbsp;
+            <span class="dot" style="width:27px;height:27px;background:#2563eb;"></span>
+            Large population
+        </p>
+
+        <p><strong>3. Circle color:</strong>
+            <span class="dot" style="background:#dc2626;"></span>
+            Hub (4 or more routes)
+            &nbsp;
+            <span class="dot" style="background:#2563eb;"></span>
+            Non-hub (fewer than 4 routes)
+        </p>
+
+        <p><strong>4. Line width:</strong>
+            <span class="line" style="border-top-width:1.5px;"></span>
+            Fewer flights
+            &nbsp;
+            <span class="line" style="border-top-width:4px;"></span>
+            Medium flights
+            &nbsp;
+            <span class="line" style="border-top-width:7px;"></span>
+            More flights per week
+        </p>
+
+        <p><strong>Hover interaction:</strong>
+            Connected routes turn orange; unrelated routes become faint.
+        </p>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        const width = 1000;
+        const height = 650;
+
+        const svg = d3.select("#map");
+        const tooltip = d3.select("#tooltip");
+
+        Promise.all([
+            d3.csv("pakistan_cities.csv", d3.autoType),
+            d3.csv("flights.csv", d3.autoType)
+        ]).then(function(data) {
+
+            const cities = data[0];
+            const flights = data[1];
+
+            // Match each city name to its coordinates
+            const cityMap = new Map(
+                cities.map(city => [city.name.trim(), city])
+            );
+
+            // Match route sources and targets to city records
+            const routes = flights.map(flight => ({
+                source: flight.source.trim(),
+                target: flight.target.trim(),
+                flights: flight.flights,
+                sourceCity: cityMap.get(flight.source.trim()),
+                targetCity: cityMap.get(flight.target.trim())
+            }));
+
+            const validRoutes = routes.filter(route =>
+                route.sourceCity && route.targetCity
+            );
+
+            if (validRoutes.length !== flights.length) {
+                console.error(
+                    "Some routes do not match city names. Check both CSV files.",
+                    routes.filter(route =>
+                        !route.sourceCity || !route.targetCity
+                    )
+                );
+            }
+
+            // Count the number of routes connected to each city
+            const degree = new Map(
+                cities.map(city => [city.name, 0])
+            );
+
+            validRoutes.forEach(route => {
+                degree.set(
+                    route.source,
+                    degree.get(route.source) + 1
+                );
+
+                degree.set(
+                    route.target,
+                    degree.get(route.target) + 1
+                );
+            });
+
+            cities.forEach(city => {
+                city.routes = degree.get(city.name);
+                city.hub = city.routes >= 4;
+            });
+
+            // Convert longitude and latitude to screen coordinates
+            const projection = d3.geoMercator()
+                .center([69.5, 30.5])
+                .scale(1800)
+                .translate([width / 2, height / 2]);
+
+            cities.forEach(city => {
+                const position = projection([city.lon, city.lat]);
+                city.x = position[0];
+                city.y = position[1];
+            });
+
+            // Circle size represents population
+            const radius = d3.scaleSqrt()
+                .domain([0, d3.max(cities, city => city.pop)])
+                .range([4, 28]);
+
+            // Line thickness represents flights per week
+            const flightExtent = d3.extent(
+                validRoutes,
+                route => route.flights
+            );
+
+            const lineWidth = d3.scaleLinear()
+                .domain(flightExtent)
+                .range([1.5, 7]);
+
+            // DRAW ROUTES FIRST
+            const routeLines = svg.append("g")
+                .attr("class", "routes")
+                .selectAll("line")
+                .data(validRoutes)
+                .join("line")
+                .attr("class", "route")
+                .attr("x1", route => route.sourceCity.x)
+                .attr("y1", route => route.sourceCity.y)
+                .attr("x2", route => route.targetCity.x)
+                .attr("y2", route => route.targetCity.y)
+                .attr("stroke-width", route =>
+                    lineWidth(route.flights)
+                );
+
+            // DRAW CITIES ON TOP OF ROUTES
+            const cityCircles = svg.append("g")
+                .attr("class", "cities")
+                .selectAll("circle")
+                .data(cities)
+                .join("circle")
+                .attr("class", "city")
+                .attr("cx", city => city.x)
+                .attr("cy", city => city.y)
+                .attr("r", city => radius(city.pop))
+                .attr("fill", city =>
+                    city.hub ? "#dc2626" : "#2563eb"
+                );
+
+            // Label cities with populations above 1 million
+            svg.append("g")
+                .selectAll("text")
+                .data(cities.filter(city => city.pop > 1))
+                .join("text")
+                .attr("class", "city-label")
+                .attr("x", city => city.x + radius(city.pop) + 4)
+                .attr("y", city => city.y + 4)
+                .text(city => city.name);
+
+            // Restore original route and city appearance
+            function resetMap() {
+                routeLines
+                    .attr("stroke", "#64748b")
+                    .attr("stroke-opacity", 0.7);
+
+                cityCircles
+                    .attr("opacity", 1)
+                    .attr("stroke", "white")
+                    .attr("stroke-width", 2);
+
+                tooltip.style("opacity", 0);
+            }
+
+            // HIGHLIGHT ROUTES WHEN A CITY IS HOVERED
+            cityCircles
+                .on("mouseover", function(event, city) {
+
+                    // Highlight connected routes and dim all others
+                    routeLines
+                        .attr("stroke", route =>
+                            route.source === city.name ||
+                            route.target === city.name
+                                ? "#f59e0b"
+                                : "#d1d5db"
+                        )
+                        .attr("stroke-opacity", route =>
+                            route.source === city.name ||
+                            route.target === city.name
+                                ? 1
+                                : 0.08
+                        );
+
+                    // Dim the other cities slightly
+                    cityCircles
+                        .attr("opacity", otherCity =>
+                            otherCity.name === city.name ? 1 : 0.55
+                        );
+
+                    d3.select(this)
+                        .attr("stroke", "#111827")
+                        .attr("stroke-width", 3);
+
+                    // Show city information
+                    tooltip.html(
+                        "<strong>" + city.name + "</strong><br>" +
+                        "Population: " + city.pop + " million<br>" +
+                        "Connected routes: " + city.routes + "<br>" +
+                        "Type: " +
+                        (city.hub ? "Hub city" : "Non-hub city") +
+                        "<br>Latitude: " + city.lat +
+                        "<br>Longitude: " + city.lon
+                    ).style("opacity", 1);
+                })
+
+                .on("mousemove", function(event) {
+                    tooltip
+                        .style("left", (event.pageX + 12) + "px")
+                        .style("top", (event.pageY + 12) + "px");
+                })
+
+                .on("mouseout", function() {
+                    resetMap();
+                });
+
+            // Reset button
+            d3.select("#reset").on("click", resetMap);
+
+        }).catch(function(error) {
+            console.error("Could not load CSV files:", error);
+
+            d3.select("body")
+                .append("p")
+                .style("color", "red")
+                .text(
+                    "Could not load the CSV files. " +
+                    "Check filenames, column names, and Live Server."
+                );
+        });
+    </script>
+
+</body>
+</html>

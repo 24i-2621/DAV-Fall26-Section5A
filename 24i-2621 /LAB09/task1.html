@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Course Enrollment Treemap</title>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f6f9;
+            text-align: center;
+        }
+
+        h1 {
+            color: #222;
+        }
+
+        #chart {
+            max-width: 1000px;
+            margin: auto;
+        }
+
+        svg {
+            width: 100%;
+            height: auto;
+        }
+
+        .course-rect {
+            stroke: white;
+            stroke-width: 2px;
+        }
+
+        .course-label {
+            fill: white;
+            font-size: 13px;
+            pointer-events: none;
+        }
+
+        .department-label {
+            fill: #111;
+            font-size: 14px;
+            font-weight: bold;
+            pointer-events: none;
+        }
+
+        #legend {
+            margin: 20px;
+        }
+
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            margin: 5px 10px;
+            gap: 6px;
+        }
+
+        .color-box {
+            width: 16px;
+            height: 16px;
+            display: inline-block;
+        }
+
+        #tooltip {
+            position: absolute;
+            display: none;
+            background: #222;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            line-height: 1.6;
+            pointer-events: none;
+            text-align: left;
+            z-index: 10;
+        }
+
+        #error {
+            color: red;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>University Course Enrollment Treemap</h1>
+
+    <div id="legend"></div>
+    <div id="chart"></div>
+    <p id="error"></p>
+    <div id="tooltip"></div>
+
+    <script>
+        const width = 1000;
+        const height = 600;
+
+        // Department colors
+        const color = d3.scaleOrdinal()
+            .domain([
+                "Computer Science",
+                "Engineering",
+                "Business",
+                "Sciences"
+            ])
+            .range([
+                "#2878B5",
+                "#2CA25F",
+                "#F28E2B",
+                "#8E63CE"
+            ]);
+
+        // Create SVG
+        const svg = d3.select("#chart")
+            .append("svg")
+            .attr("viewBox", `0 0 ${width} ${height}`);
+
+        const tooltip = d3.select("#tooltip");
+
+        // Load university.csv
+        d3.csv("university.csv", d3.autoType)
+            .then(function(data) {
+
+                // Group courses by department
+                const groupedData = d3.group(
+                    data,
+                    d => d.department
+                );
+
+                // Convert CSV rows into a hierarchy:
+                // University -> Department -> Course
+                const hierarchyData = {
+                    name: "University",
+                    children: Array.from(
+                        groupedData,
+                        ([department, courses]) => ({
+                            name: department,
+                            children: courses.map(d => ({
+                                name: d.course,
+                                students: d.students
+                            }))
+                        })
+                    )
+                };
+
+                // Create hierarchy and calculate student totals
+                const root = d3.hierarchy(hierarchyData)
+                    .sum(d => d.students || 0)
+                    .sort((a, b) => b.value - a.value);
+
+                // Calculate rectangle positions and sizes
+                d3.treemap()
+                    .size([width, height])
+                    .paddingOuter(5)
+                    .paddingTop(30)
+                    .paddingInner(3)
+                    (root);
+
+                // Draw course rectangles
+                const nodes = svg.selectAll(".node")
+                    .data(root.leaves())
+                    .join("g")
+                    .attr("class", "node")
+                    .attr("transform", d =>
+                        `translate(${d.x0},${d.y0})`
+                    );
+
+                nodes.append("rect")
+                    .attr("class", "course-rect")
+                    .attr("width", d => d.x1 - d.x0)
+                    .attr("height", d => d.y1 - d.y0)
+                    .attr("fill", d => color(d.parent.data.name))
+                    .on("mouseover", function(event, d) {
+
+                        d3.select(this)
+                            .attr("stroke", "#111")
+                            .attr("stroke-width", 3);
+
+                        tooltip
+                            .style("display", "block")
+                            .html(
+                                "<b>Course:</b> " + d.data.name +
+                                "<br><b>Department:</b> " +
+                                d.parent.data.name +
+                                "<br><b>Students:</b> " + d.data.students
+                            );
+                    })
+                    .on("mousemove", function(event) {
+                        tooltip
+                            .style("left", (event.pageX + 12) + "px")
+                            .style("top", (event.pageY + 12) + "px");
+                    })
+                    .on("mouseout", function() {
+
+                        d3.select(this)
+                            .attr("stroke", "white")
+                            .attr("stroke-width", 2);
+
+                        tooltip.style("display", "none");
+                    });
+
+                // Add course names inside rectangles
+                nodes.append("text")
+                    .attr("class", "course-label")
+                    .attr("x", 6)
+                    .attr("y", 19)
+                    .text(d => d.data.name)
+                    .each(function(d) {
+                        const rectWidth = d.x1 - d.x0;
+                        const rectHeight = d.y1 - d.y0;
+
+                        if (rectWidth < 85 || rectHeight < 28) {
+                            d3.select(this).style("display", "none");
+                        }
+                    });
+
+                // Add department names
+                svg.selectAll(".department-label")
+                    .data(root.children)
+                    .join("text")
+                    .attr("class", "department-label")
+                    .attr("x", d => d.x0 + 7)
+                    .attr("y", d => d.y0 + 20)
+                    .text(d => d.data.name);
+
+                // Create color legend
+                d3.select("#legend")
+                    .selectAll(".legend-item")
+                    .data(color.domain())
+                    .join("div")
+                    .attr("class", "legend-item")
+                    .html(d =>
+                        `<span class="color-box"
+                         style="background-color:${color(d)}"></span>${d}`
+                    );
+
+            })
+            .catch(function(error) {
+                console.error("Error loading CSV:", error);
+
+                d3.select("#error")
+                    .text(
+                        "Could not load university.csv. " +
+                        "Make sure it is in the same folder and " +
+                        "run this page using VS Code Live Server."
+                    );
+            });
+    </script>
+
+</body>
+</html>

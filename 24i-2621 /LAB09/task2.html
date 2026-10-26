@@ -1,0 +1,240 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>University Structure Dendrogram</title>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f8f9fa;
+        }
+
+        h2 {
+            text-align: center;
+            color: #222;
+        }
+
+        .hint {
+            text-align: center;
+            color: #555;
+        }
+
+        svg {
+            display: block;
+            margin: auto;
+            background-color: white;
+            border: 1px solid #ccc;
+        }
+
+        .link {
+            fill: none;
+            stroke: #9ca3af;
+            stroke-width: 1.5px;
+        }
+
+        .node {
+            cursor: pointer;
+        }
+
+        .node circle {
+            stroke: white;
+            stroke-width: 2px;
+        }
+
+        .node text {
+            font-size: 13px;
+            font-weight: bold;
+            fill: #111827;
+            stroke: white;
+            stroke-width: 4px;
+            stroke-linejoin: round;
+            paint-order: stroke;
+            pointer-events: none;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>University Structure Dendrogram</h2>
+    <p class="hint">Click a department node to collapse or expand its courses.</p>
+
+    <svg width="1200" height="700"></svg>
+
+    <script>
+        const width = 1200;
+        const height = 700;
+
+        const margin = {
+            top: 40,
+            right: 280,
+            bottom: 30,
+            left: 200
+        };
+
+        const innerWidth = width - margin.left - margin.right;
+        const innerHeight = height - margin.top - margin.bottom;
+
+        const svg = d3.select("svg");
+
+        const g = svg.append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+
+        const color = d3.scaleOrdinal()
+            .domain([0, 1, 2])
+            .range(["#e6550d", "#3182bd", "#31a354"]);
+
+        d3.csv("university.csv").then(function(data) {
+
+            const groupedData = d3.group(
+                data,
+                d => d.department
+            );
+
+            const hierarchyData = {
+                name: "University",
+                children: Array.from(
+                    groupedData,
+                    ([department, courses]) => ({
+                        name: department,
+                        children: courses.map(d => ({
+                            name: d.course
+                        }))
+                    })
+                )
+            };
+
+            const root = d3.hierarchy(hierarchyData);
+
+            root.x0 = innerHeight / 2;
+            root.y0 = 0;
+
+            let nextId = 0;
+
+            root.each(d => {
+                d.id = ++nextId;
+            });
+
+            const treeLayout = d3.tree()
+                .size([innerHeight, innerWidth])
+                .separation((a, b) => a.parent === b.parent ? 1.5 : 2);
+
+            function update(source) {
+
+                treeLayout(root);
+
+                const nodes = root.descendants();
+                const links = root.links();
+
+                // Set horizontal distance according to depth
+                nodes.forEach(d => {
+                    d.y = d.depth * 300;
+                });
+
+                // Create curved links
+                const link = g.selectAll(".link")
+                    .data(links, d => d.target.id);
+
+                link.enter()
+                    .append("path")
+                    .attr("class", "link")
+                    .attr("d", d3.linkHorizontal()
+                        .x(() => source.y0)
+                        .y(() => source.x0))
+                    .merge(link)
+                    .transition()
+                    .duration(500)
+                    .attr("d", d3.linkHorizontal()
+                        .x(d => d.y)
+                        .y(d => d.x));
+
+                link.exit()
+                    .transition()
+                    .duration(500)
+                    .remove();
+
+                // Create nodes
+                const node = g.selectAll(".node")
+                    .data(nodes, d => d.id);
+
+                const nodeEnter = node.enter()
+                    .append("g")
+                    .attr("class", "node")
+                    .attr("transform", `translate(${source.y0},${source.x0})`)
+                    .on("click", function(event, d) {
+
+                        // Only departments can collapse or expand
+                        if (d.depth !== 1) {
+                            return;
+                        }
+
+                        if (d.children) {
+                            d._children = d.children;
+                            d.children = null;
+                        } else {
+                            d.children = d._children;
+                            d._children = null;
+                        }
+
+                        update(d);
+                    });
+
+                // Add circles and color them by depth
+                nodeEnter.append("circle")
+                    .attr("r", 1e-6)
+                    .attr("fill", d => color(d.depth));
+
+                // Add labels with spacing from circles and links
+                nodeEnter.append("text")
+                    .attr("dy", "0.35em")
+                    .attr("x", d => d.depth === 2 ? 18 : -18)
+                    .attr("text-anchor", d =>
+                        d.depth === 2 ? "start" : "end"
+                    )
+                    .text(d => d.data.name);
+
+                // Update node positions
+                const nodeUpdate = nodeEnter.merge(node);
+
+                nodeUpdate.transition()
+                    .duration(500)
+                    .attr("transform", d => `translate(${d.y},${d.x})`);
+
+                nodeUpdate.select("circle")
+                    .transition()
+                    .duration(500)
+                    .attr("r", 7)
+                    .attr("fill", d => color(d.depth));
+
+                // Remove old nodes
+                node.exit()
+                    .transition()
+                    .duration(500)
+                    .attr("transform", `translate(${source.y},${source.x})`)
+                    .remove();
+
+                // Store positions for the next animation
+                nodes.forEach(d => {
+                    d.x0 = d.x;
+                    d.y0 = d.y;
+                });
+            }
+
+            update(root);
+
+        }).catch(function(error) {
+            console.error("Error loading university.csv:", error);
+            alert(
+                "Could not load university.csv. Make sure the CSV file is in the same folder and run this page using VS Code Live Server."
+            );
+        });
+    </script>
+
+</body>
+</html>
